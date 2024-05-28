@@ -1,0 +1,185 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-java
+  labels:
+    name: servernetes-java
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app/servernetes_lib && cp -Lr /src/* /app/ && cp -Lr /src_lib/* /app/servernetes_lib/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+        - name: config-lib-volume
+          mountPath: /src_lib
+    - name: init-install
+      image: maven:3.8.1-jdk-11
+      command: ["sh", "-c"]
+      args:
+        - cd /app && mvn clean install && ls -R /app && cat /app/pom.xml && echo "Build process complete"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  containers:
+    - name: java-container
+      image: openjdk:11-jre-slim
+      workingDir: /app
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - "java -jar target/servernetes-1.0.0.jar"
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-java
+    - name: config-lib-volume
+      configMap:
+        name: servernetes-java-lib
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-java
+data:
+  pom.xml: |
+    <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+        <modelVersion>4.0.0</modelVersion>
+        <groupId>com.example</groupId>
+        <artifactId>servernetes</artifactId>
+        <version>1.0.0</version>
+        <properties>
+            <maven.compiler.source>11</maven.compiler.source>
+            <maven.compiler.target>11</maven.compiler.target>
+        </properties>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-web</artifactId>
+                <version>2.5.2</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-jpa</artifactId>
+                <version>2.5.2</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-test</artifactId>
+                <version>2.5.2</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+        <build>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+            </plugins>
+        </build>
+    </project>
+
+  application.properties: |
+    server.port=7777
+  ServernetesApplication.java: |
+    package com.example.servernetes;
+
+    import org.springframework.boot.SpringApplication;
+    import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+    @SpringBootApplication
+    public class ServernetesApplication {
+        public static void main(String[] args) {
+            SpringApplication.run(ServernetesApplication.class, args);
+        }
+    }
+  ServernetesController.java: |
+    package com.example.servernetes;
+
+    import org.springframework.web.bind.annotation.*;
+    import org.springframework.beans.factory.annotation.Value;
+
+    @RestController
+    public class ServernetesController {
+        
+        @Value("${SECRET_URL}")
+        private String secretUrl;
+
+        @PostMapping("/")
+        public String handlePost(@RequestBody String data) {
+            System.out.println("Received data: " + data);
+
+            // Uncomment and modify the following lines to send data to some other webhook.
+            /*
+            try {
+                RestTemplate restTemplate = new RestTemplate();
+                ResponseEntity<String> response = restTemplate.postForEntity(secretUrl, data, String.class);
+                return response.getBody();
+            } catch (Exception e) {
+                e.printStackTrace();
+                return "Error: " + e.getMessage();
+            }
+            */
+
+            return getResult();
+        }
+
+        public String getResult() {
+            System.out.println("hello there");
+            return "hello from Java";
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-java-lib
+data:
+  servernetes_lib.java: |
+    package com.example.servernetes;
+
+    public class ServernetesLib {
+        public static String getResult() {
+            System.out.println("hello there");
+            return "hello from Java";
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-java
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 7777
+  selector:
+    name: servernetes-java

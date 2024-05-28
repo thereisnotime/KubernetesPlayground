@@ -3,17 +3,23 @@ import requests
 import time
 import statistics
 import argparse
+import subprocess
+import re
 from prettytable import PrettyTable
 from colorama import Fore, Style, init
 
-# Initialize colorama
-init()
-
-# List of ports
-ports = [7777, 7778, 7779]
-
-# Example JSON payload
-payload = {"example_key": "example_value"}
+def get_ports():
+    # Command to get the output from ps aux filtering for kubectl port-forward in the servernetes namespace
+    command = "ps aux | grep 'kubectl port-forward' | grep 'servernetes'"
+    result = subprocess.run(command, shell=True, text=True, capture_output=True)
+    
+    # Regex to find the port numbers
+    port_regex = r'\b(\d+):7777\b'
+    ports = re.findall(port_regex, result.stdout)
+    
+    # Convert ports to integers
+    ports = [int(port) for port in ports if port.isdigit()]
+    return ports
 
 # Function to perform POST request and measure response time
 def post_request(port):
@@ -55,7 +61,7 @@ def benchmark(endpoints, total_requests):
 # Function to print benchmark results in a table
 def print_results(response_times, total_failed_requests, last_words):
     table = PrettyTable()
-    table.field_names = ["Port", "Language", "Max Response Time (s)", "Min Response Time (s)", "Avg Response Time (s)", "Total Requests Sent", "Total Failed Requests"]
+    table.field_names = ["Port", "Language", "Max Response Time (s)", "Min Response Time (s)", "Avg Response Time (s)", "Total Time (ms)", "Total Requests Sent", "Total Failed Requests"]
     
     for port, times in response_times.items():
         last_word = last_words[port] if last_words[port] is not None else 'N/A'
@@ -63,18 +69,21 @@ def print_results(response_times, total_failed_requests, last_words):
             max_time = max(times)
             min_time = min(times)
             avg_time = statistics.mean(times)
+            total_time_ms = sum(times) * 1000  # Convert seconds to milliseconds
             table.add_row([
                 port,
                 f"{Fore.YELLOW}{last_word}{Style.RESET_ALL}",
                 f"{Fore.GREEN}{max_time:.4f}{Style.RESET_ALL}",
                 f"{Fore.GREEN}{min_time:.4f}{Style.RESET_ALL}",
                 f"{Fore.GREEN}{avg_time:.4f}{Style.RESET_ALL}",
+                f"{Fore.GREEN}{total_time_ms:.2f}{Style.RESET_ALL}",
                 f"{Fore.CYAN}{len(times) + total_failed_requests[port]}{Style.RESET_ALL}",
                 f"{Fore.RED}{total_failed_requests[port]}{Style.RESET_ALL}"
             ])
         else:
             table.add_row([
                 port,
+                f"{Fore.RED}No successful requests{Style.RESET_ALL}",
                 f"{Fore.RED}No successful requests{Style.RESET_ALL}",
                 f"{Fore.RED}No successful requests{Style.RESET_ALL}",
                 f"{Fore.RED}No successful requests{Style.RESET_ALL}",
@@ -86,6 +95,16 @@ def print_results(response_times, total_failed_requests, last_words):
     print(table)
 
 if __name__ == "__main__":
+    # Initialize colorama
+    init()
+
+    # Get all 
+    ports = get_ports()
+
+    # Example JSON payload
+    payload = {"example_key": "example_value"}
+
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Benchmark API endpoints")
     parser.add_argument("total_requests", type=int, help="Total number of requests to send")
     args = parser.parse_args()

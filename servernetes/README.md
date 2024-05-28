@@ -4,6 +4,12 @@ What if you run your code as "serverless" functions, but on your own Kubernetes 
 
 Even compiled languages like Rust and Typescript, without having to worry about the pipelines (not very useful though).
 
+What is the use case? I don't know yet, but it's fun to play with.
+
+Interesting things to note:
+
+- You can use configMaps as libraries to share between pods
+
 ## Usage
 
 First `cd` into the folder of the language you want to use, then:
@@ -42,16 +48,7 @@ kill $(lsof -t -i:7777)
 Port Forward All:
 
 ```bash
-BASE_PORT=7777
-PORT_INCREMENT=0
-SERVICES=$(kubectl get services -n servernetes -l app=servernetes -o jsonpath='{.items[*].metadata.name}')
-for SERVICE in $SERVICES; do
-    echo "Port forwarding $SERVICE to localhost:$PORT"
-    PORT=$((BASE_PORT + PORT_INCREMENT))
-    kill $(lsof -t -i:$PORT)
-    kubectl port-forward -n servernetes service/$SERVICE $PORT:7777 &
-    PORT_INCREMENT=$((PORT_INCREMENT + 1))
-done
+bash ../port-forward-all.sh
 ```
 
 Send a test request:
@@ -70,10 +67,10 @@ curl -X POST -H "Content-Type: application/json" -d '{
     "likes": ["reading", "coding", "movies"],
     "dislikes": ["noise", "crowds"]
   }
-}' http://localhost:7777
+}' http://localhost:7777/
 ```
 
-Run Benchmark:
+Run Benchmark (make sure that you did `pip3 install -r requirements.txt`):
 
 ```bash
 python3 benchmark.py 100
@@ -91,13 +88,13 @@ kill $(lsof -t -i:7777)
 Some interesting results (keep in mind bad implementation for an API):
 
 ```bash
-python3 benchmark.py 1000
-
-+------+--------------------+-----------------------+-----------------------+-----------------------+---------------------+-----------------------+
-| Port |      Language      | Max Response Time (s) | Min Response Time (s) | Avg Response Time (s) | Total Requests Sent | Total Failed Requests |
-+------+--------------------+-----------------------+-----------------------+-----------------------+---------------------+-----------------------+
-| 7777 |       Python       |         0.1351        |         0.0052        |         0.0554        |         1000        |           0           |
-| 7778 |        Rust        |         0.1356        |         0.0073        |         0.0640        |         1000        |           0           |
-| 7779 |     TypeScript     |         0.1406        |         0.0056        |         0.0469        |         1000        |           0           |
-+------+--------------------+-----------------------+-----------------------+-----------------------+---------------------+-----------------------+
+$ python3 benchmark.py 500
++------+------------+-----------------------+-----------------------+-----------------------+-----------------+---------------------+-----------------------+
+| Port |  Language  | Max Response Time (s) | Min Response Time (s) | Avg Response Time (s) | Total Time (ms) | Total Requests Sent | Total Failed Requests |
++------+------------+-----------------------+-----------------------+-----------------------+-----------------+---------------------+-----------------------+
+| 7778 |   Golang   |         0.0427        |         0.0051        |         0.0174        |     8710.47     |         500         |           0           |
+| 7779 |   Python   |         0.0495        |         0.0055        |         0.0180        |     8991.95     |         500         |           0           |
+| 7780 |    Rust    |         0.0657        |         0.0052        |         0.0177        |     8830.51     |         500         |           0           |
+| 7781 | TypeScript |         0.0441        |         0.0058        |         0.0179        |     8964.82     |         500         |           0           |
++------+------------+-----------------------+-----------------------+-----------------------+-----------------+---------------------+-----------------------+
 ```

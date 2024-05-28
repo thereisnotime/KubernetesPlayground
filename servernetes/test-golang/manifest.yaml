@@ -1,0 +1,157 @@
+---
+# TODO: Switch GIN to production mode
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-golang
+  labels:
+    name: servernetes-golang
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app/servernetes_lib && cp -Lr /src/* /app/ && cp -Lr /src_lib/* /app/servernetes_lib/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+        - name: config-lib-volume
+          mountPath: /src_lib
+    - name: init-install
+      image: golang:1.18-alpine
+      command: ["sh", "-c"]
+      args:
+        - cd /app && go mod tidy && go build -o server && ls -R /app && echo "Build process complete"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  containers:
+    - name: golang-container
+      image: golang:1.18-alpine
+      workingDir: /app
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - "./server"
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-golang
+    - name: config-lib-volume
+      configMap:
+        name: servernetes-golang-lib
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-golang
+data:
+  go.mod: |
+    module servernetes
+
+    go 1.18
+
+    require (
+        github.com/gin-gonic/gin v1.7.7
+        github.com/joho/godotenv v1.4.0
+    )
+
+  go.sum: |
+    # (Auto-generated content)
+  main.go: |
+    package main
+
+    import (
+        "fmt"
+        "github.com/gin-gonic/gin"
+        "net/http"
+        "os"
+        "servernetes/servernetes_lib"
+    )
+
+    func main() {
+        secretURL := os.Getenv("SECRET_URL")
+        if secretURL == "" {
+            fmt.Println("SECRET_URL environment variable not set")
+            os.Exit(1)
+        }
+
+        router := gin.Default()
+
+        router.POST("/", func(c *gin.Context) {
+            var data map[string]interface{}
+            if err := c.BindJSON(&data); err != nil {
+                c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+                return
+            }
+            fmt.Printf("Received data: %+v\n", data)
+
+            // Example for sending data to some other webhook
+            /*
+            resp, err := http.Post(secretURL, "application/json", bytes.NewBuffer(data))
+            if err != nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+                return
+            }
+            defer resp.Body.Close()
+            var result map[string]interface{}
+            json.NewDecoder(resp.Body).Decode(&result)
+            c.JSON(http.StatusOK, result)
+            */
+
+            c.String(http.StatusOK, servernetes_lib.GetResult())
+        })
+
+        router.Run(":7777")
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-golang-lib
+data:
+  servernetes_lib.go: |
+    package servernetes_lib
+
+    import "fmt"
+
+    func GetResult() string {
+        fmt.Println("hello there")
+        return "hello from Golang"
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-golang
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 7777
+  selector:
+    name: servernetes-golang

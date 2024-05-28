@@ -1,0 +1,206 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-csharp
+  labels:
+    name: servernetes-csharp
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app/src && cp /src/servernetes.csproj /app/src/ && cp /src/Program.cs /app/src/ && cp /src/Startup.cs /app/src/ && cp /src/ServernetesLib.cs /app/src/ && cp /src/ServernetesController.cs /app/src/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+    - name: init-install
+      image: mcr.microsoft.com/dotnet/sdk:6.0
+      command: ["sh", "-c"]
+      args:
+        - cd /app/src && dotnet build -c Release && ls -R /app && echo "Build process complete"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  containers:
+    - name: csharp-container
+      image: mcr.microsoft.com/dotnet/aspnet:6.0
+      workingDir: /app/src
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - "dotnet /app/src/bin/Release/net6.0/servernetes.dll"
+      ports:
+        - containerPort: 80
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-csharp
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-csharp
+data:
+  servernetes.csproj: |
+    <Project Sdk="Microsoft.NET.Sdk.Web">
+      <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+      </PropertyGroup>
+      <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="6.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="6.0.0" />
+        <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="6.0.0" />
+      </ItemGroup>
+    </Project>
+
+  Program.cs: |
+    using Microsoft.AspNetCore.Hosting;
+    using Microsoft.Extensions.Hosting;
+
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            CreateHostBuilder(args).Build().Run();
+        }
+
+        public static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args)
+                .ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.UseStartup<Startup>();
+                });
+    }
+
+  Startup.cs: |
+    using Microsoft.AspNetCore.Builder;
+    using Microsoft.AspNetCore.Hosting;
+    using Microsoft.Extensions.Configuration;
+    using Microsoft.Extensions.DependencyInjection;
+    using Microsoft.Extensions.Hosting;
+
+    public class Startup
+    {
+        public Startup(IConfiguration configuration)
+        {
+            Configuration = configuration;
+        }
+
+        public IConfiguration Configuration { get; }
+
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddControllers().AddNewtonsoftJson();
+        }
+
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+        {
+            if (env.IsDevelopment())
+            {
+                app.UseDeveloperExceptionPage();
+            }
+
+            app.UseRouting();
+
+            app.UseEndpoints(endpoints =>
+            {
+                endpoints.MapControllers();
+            });
+        }
+    }
+
+  ServernetesLib.cs: |
+    public static class ServernetesLib
+    {
+        public static string GetResult()
+        {
+            return "hello from C#";
+        }
+    }
+
+  ServernetesController.cs: |
+    using Microsoft.AspNetCore.Mvc;
+    using Microsoft.Extensions.Configuration;
+    using Newtonsoft.Json.Linq;
+    using System;
+    using System.Threading.Tasks;
+
+    [ApiController]
+    [Route("/")]  // Update the route to handle requests at the root
+    public class ServernetesController : ControllerBase
+    {
+        private readonly IConfiguration _configuration;
+
+        public ServernetesController(IConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> PostHandler([FromBody] JObject payload)
+        {
+            Console.WriteLine($"Received raw payload: {payload}");
+
+            // Deserialize and print the payload for debugging
+            try
+            {
+                var parsedJson = payload.ToString();
+                Console.WriteLine($"Deserialized JSON payload: {parsedJson}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to deserialize payload: {ex.Message}");
+            }
+
+            string result = ServernetesLib.GetResult();
+
+            string secretUrl = _configuration["SECRET_URL"];
+            if (string.IsNullOrEmpty(secretUrl))
+            {
+                throw new InvalidOperationException("SECRET_URL must be set");
+            }
+
+            // NOTE: Example for sending data to some other webhook.
+            // var client = new HttpClient();
+            // var response = await client.PostAsync(secretUrl, new StringContent(payload.ToString(), Encoding.UTF8, "application/json"));
+            // var responseString = await response.Content.ReadAsStringAsync();
+            // return Ok(responseString);
+
+            return Ok(result);
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-csharp
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 80
+  selector:
+    name: servernetes-csharp

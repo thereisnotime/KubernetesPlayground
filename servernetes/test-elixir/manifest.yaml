@@ -1,0 +1,266 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-elixir
+  labels:
+    name: servernetes-elixir
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app/servernetes_lib && cp -Lr /src/* /app/ && cp -Lr /src_lib/* /app/servernetes_lib/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+        - name: config-lib-volume
+          mountPath: /src_lib
+    - name: init-install
+      image: elixir:1.12-alpine
+      command: ["sh", "-c"]
+      args:
+        - cd /app && mix local.hex --force && mix local.rebar --force && mix deps.get && mix compile && echo "Build process complete"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  containers:
+    - name: elixir-container
+      image: elixir:1.12-alpine
+      workingDir: /app
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          mix local.hex --force
+          mix deps.get
+          mix compile
+          mix phx.server
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-elixir
+    - name: config-lib-volume
+      configMap:
+        name: servernetes-elixir-lib
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-elixir
+data:
+  mix.exs: |
+    defmodule Servernetes.MixProject do
+      use Mix.Project
+
+      def project do
+        [
+          app: :servernetes,
+          version: "0.1.0",
+          elixir: "~> 1.12",
+          start_permanent: Mix.env() == :prod,
+          deps: deps()
+        ]
+      end
+
+      def application do
+        [
+          mod: {Servernetes.Application, []},
+          extra_applications: [:logger, :runtime_tools]
+        ]
+      end
+
+      defp deps do
+        [
+          {:phoenix, "~> 1.5.14"},
+          {:phoenix_ecto, "~> 4.1"},
+          {:ecto_sql, "~> 3.4"},
+          {:postgrex, ">= 0.0.0"},
+          {:phoenix_live_dashboard, "~> 0.2"},
+          {:telemetry_metrics, "~> 0.4"},
+          {:telemetry_poller, "~> 0.4"},
+          {:gettext, "~> 0.11"},
+          {:jason, "~> 1.0"},
+          {:plug_cowboy, "~> 2.0"}
+        ]
+      end
+    end
+  config.exs: |
+    import Config
+
+    config :servernetes, ServernetesWeb.Endpoint,
+      url: [host: "localhost"],
+      secret_key_base: "YOUR_SECRET_KEY_BASE",
+      render_errors: [view: ServernetesWeb.ErrorView, accepts: ~w(json), layout: false],
+      pubsub_server: Servernetes.PubSub,
+      live_view: [signing_salt: "YOUR_SIGNING_SALT"]
+
+    config :logger, :console,
+      format: "$time $metadata[$level] $message\n",
+      metadata: [:request_id]
+
+    config :phoenix, :json_library, Jason
+
+    import_config "#{Mix.env()}.exs"
+  dev.exs: |
+    import Config
+
+    config :servernetes, ServernetesWeb.Endpoint,
+      http: [port: 4000],
+      debug_errors: true,
+      code_reloader: true,
+      check_origin: false,
+      watchers: []
+
+    config :logger, :console, format: "[$level] $message\n"
+
+    config :phoenix, :stacktrace_depth, 20
+    config :phoenix, :plug_init_mode, :runtime
+  prod.exs: |
+    import Config
+
+    config :servernetes, ServernetesWeb.Endpoint,
+      http: [port: {:system, "PORT"}],
+      url: [host: System.get_env("HOSTNAME"), port: 80],
+      cache_static_manifest: "priv/static/cache_manifest.json",
+      server: true,
+      root: "."
+
+    config :logger, level: :info
+  rel.exs: |
+    import Config
+
+    config :servernetes, ServernetesWeb.Endpoint,
+      http: [port: {:system, "PORT"}],
+      secret_key_base: System.get_env("SECRET_KEY_BASE")
+
+    config :phoenix, ServernetesWeb.Endpoint, server: true
+
+  application.ex: |
+    defmodule Servernetes.Application do
+      use Application
+
+      def start(_type, _args) do
+        IO.puts "Starting Servernetes.Application"
+        children = [
+          ServernetesWeb.Endpoint
+        ]
+
+        opts = [strategy: :one_for_one, name: Servernetes.Supervisor]
+        Supervisor.start_link(children, opts)
+      end
+    end
+  endpoint.ex: |
+    defmodule ServernetesWeb.Endpoint do
+      use Phoenix.Endpoint, otp_app: :servernetes
+
+      socket "/socket", ServernetesWeb.UserSocket,
+        websocket: true,
+        longpoll: false
+
+      plug Plug.Static,
+        at: "/",
+        from: :servernetes,
+        gzip: false,
+        only: ~w(css fonts images js favicon.ico robots.txt)
+
+      plug Plug.RequestId
+      plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+
+      plug Plug.Parsers,
+        parsers: [:urlencoded, :multipart, :json],
+        pass: ["*/*"],
+        json_decoder: Phoenix.json_library()
+
+      plug Plug.MethodOverride
+      plug Plug.Head
+      plug Plug.Session, store: :cookie, key: "_servernetes_key",
+        signing_salt: "YOUR_SIGNING_SALT"
+
+      plug ServernetesWeb.Router
+
+      @impl true
+      def init(_key, config) do
+        if config[:load_from_system_env] do
+          port = System.get_env("PORT") || raise "expected the PORT environment variable to be set"
+          {:ok, Keyword.put(config, :http, [:inet6, port: port])}
+        else
+          {:ok, config}
+        end
+      end
+    end
+  router.ex: |
+    defmodule ServernetesWeb.Router do
+      use ServernetesWeb, :router
+
+      pipeline :api do
+        plug :accepts, ["json"]
+      end
+
+      scope "/", ServernetesWeb do
+        pipe_through :api
+
+        post "/", PageController, :index
+      end
+    end
+  page_controller.ex: |
+    defmodule ServernetesWeb.PageController do
+      use ServernetesWeb, :controller
+
+      def index(conn, _params) do
+        result = ServernetesLib.get_result()
+        json(conn, %{result: result})
+      end
+    end
+  page_view.ex: |
+    defmodule ServernetesWeb.PageView do
+      use ServernetesWeb, :view
+    end
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-elixir-lib
+data:
+  servernetes_lib.ex: |
+    defmodule ServernetesLib do
+      def get_result do
+        IO.puts("hello there")
+        "hello from Elixir"
+      end
+    end
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-elixir
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4000
+      targetPort: 4000
+  selector:
+    name: servernetes-elixir
