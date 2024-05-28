@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-rust
+  labels:
+    name: servernetes-rust
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app/src && cp /src/Cargo.toml /app/ && cp /src/main.rs /app/src/ && cp /src_lib/servernetes_lib.rs /app/src/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+        - name: config-lib-volume
+          mountPath: /src_lib
+    - name: init-install
+      image: rust:1.78
+      command: ["sh", "-c"]
+      args:
+        - cd /app && cargo build --release && ls -R /app && echo "Build process complete"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  containers:
+    - name: rust-container
+      image: rust:1.78
+      workingDir: /app
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - "./target/release/servernetes"
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-rust
+    - name: config-lib-volume
+      configMap:
+        name: servernetes-rust-lib
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-rust
+data:
+  Cargo.toml: |
+    [package]
+    name = "servernetes"
+    version = "0.1.0"
+    edition = "2021"
+
+    [dependencies]
+    actix-web = "4"
+    reqwest = { version = "0.11", features = ["json"] }
+    tokio = { version = "1", features = ["full"] }
+    serde = { version = "1", features = ["derive"] }
+    serde_json = "1"
+    dotenv = "0.15"
+
+    [[bin]]
+    name = "servernetes"
+    path = "src/main.rs"
+
+  main.rs: |
+    mod servernetes_lib;
+
+    use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
+    use serde_json::Value;
+    use std::env;
+    use dotenv::dotenv;
+    use crate::servernetes_lib::get_result;
+
+    #[post("/")]
+    async fn post_handler(payload: web::Bytes) -> impl Responder {
+        println!("Received raw payload: {:?}", payload);
+
+        // Attempt to deserialize the payload as JSON
+        let json_result: Result<Value, _> = serde_json::from_slice(&payload);
+
+        match json_result {
+            Ok(parsed_json) => {
+                println!("Deserialized JSON payload: {:?}", parsed_json);
+            }
+            Err(err) => {
+                println!("Failed to deserialize payload: {}", err);
+            }
+        }
+
+        let result = get_result();
+
+        let secret_url = env::var("SECRET_URL")
+            .expect("SECRET_URL must be set");
+
+        // NOTE: Example for sending data to some other webhook.
+        // let client = Client::new();
+        // match client.post(&secret_url).json(&*payload).send().await {
+        //    Ok(response) => HttpResponse::Ok().body(response.text().await.unwrap_or_else(|_| String::from("Error reading response"))),
+        //    Err(_) => HttpResponse::InternalServerError().body("Error sending request"),
+        // }
+
+        HttpResponse::Ok().body(result)
+    }
+
+    #[actix_web::main]
+    async fn main() -> std::io::Result<()> {
+        dotenv().ok();
+        println!("Starting server...");
+        HttpServer::new(|| {
+            App::new()
+                .service(post_handler)
+        })
+        .bind("0.0.0.0:7777")?
+        .run()
+        .await
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-rust-lib
+data:
+  servernetes_lib.rs: |
+    pub fn get_result() -> String {
+        "hello from Rust".to_string()
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-rust
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 7777
+  selector:
+    name: servernetes-rust

@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-python
+  labels:
+    name: servernetes-python
+    app: servernetes
+spec:
+  containers:
+    - name: fastapi-container
+      image: tiangolo/uvicorn-gunicorn-fastapi:python3.11
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["uvicorn"]
+      args: ["main:app", "--host", "0.0.0.0", "--port", "7777"]
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app
+          mountPath: /app
+        - name: servernetes-python-lib
+          mountPath: /app/servernetes_lib
+  volumes:
+    - name: app
+      configMap:
+        name: servernetes-python
+    - name: servernetes-python-lib
+      configMap:
+        name: servernetes-python-lib
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-python
+data:
+  main.py: |
+    import httpx
+    import os
+    import logging
+    from fastapi import FastAPI, Request, HTTPException
+    from fastapi.responses import PlainTextResponse
+    from servernetes_lib.servernetes_lib import get_result
+  
+    # Configure the logger to include the current time
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Initialize FastAPI app
+    app = FastAPI()
+
+    # Load some webhook URL from environment
+    SECRET_URL = os.getenv("SECRET_URL")
+    if not SECRET_URL:
+        logging.error("SECRET_URL environment variable not set")
+        raise ValueError("SECRET_URL environment variable not set")
+
+    @app.post("/", status_code=201, response_class=PlainTextResponse)
+    async def alert_handler(request: Request):
+        headers = dict(request.headers)
+        body = await request.body()
+        
+        logging.info(f"Received headers: {headers}")
+        logging.info(f"Received body: {body.decode('utf-8')}")
+
+        # NOTE: Example for sending data to some other webhook.
+        # data = await request.json()
+        # logging.info(f"Received data: {data}")
+
+        return get_result()
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-python-lib
+data:
+  servernetes_lib.py: |
+    def get_result():
+      print("hello from Python")
+      return "hello from Python"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-python
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 7777
+  selector:
+    name: servernetes-python
