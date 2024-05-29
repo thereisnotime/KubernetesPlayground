@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: servernetes-zig
+  labels:
+    name: servernetes-zig
+    app: servernetes
+spec:
+  initContainers:
+    - name: copy-source
+      image: busybox
+      command: ["sh", "-c"]
+      args:
+        - mkdir -p /app && cp -Lr /src/* /app/ && cp -Lr /src_lib/* /app/
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+        - name: config-volume
+          mountPath: /src
+        - name: config-lib-volume
+          mountPath: /src_lib
+  containers:
+    - name: zig-container
+      image: alpine:latest
+      workingDir: /app
+      env:
+        - name: SECRET_URL
+          valueFrom:
+            secretKeyRef:
+              name: secret-url
+              key: SECRET_URL
+      command: ["sh", "-c"]
+      args:
+        - apk add zig && zig build-exe main.zig -O ReleaseFast -lc && ./main
+      resources:
+        limits:
+          cpu: "0.5"
+          memory: "512Mi"
+        requests:
+          cpu: "0.1"
+          memory: "50Mi"
+      volumeMounts:
+        - name: app-source
+          mountPath: /app
+  volumes:
+    - name: config-volume
+      configMap:
+        name: servernetes-zig
+    - name: config-lib-volume
+      configMap:
+        name: servernetes-zig-lib
+    - name: app-source
+      emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-zig
+data:
+  main.zig: |
+    const std = @import("std");
+    const net = @import("std").net;
+    const getResult = @import("servernetes_lib.zig").getResult;
+
+    pub fn main() !void {
+        const allocator = std.heap.page_allocator;
+        const server = try net.StreamServer.init(.{
+            .address = net.Address.parseIp4("0.0.0.0", 7777),
+        });
+        defer server.deinit();
+
+        try server.listen();
+
+        while (true) {
+            const client = try server.accept();
+            defer client.deinit();
+
+            var buffer: [1024]u8 = undefined;
+            const read = try client.reader().readAll(&buffer);
+            const request = std.mem.sliceToString(buffer[0..read]);
+
+            if (std.mem.startsWith(u8, request, "POST ")) {
+                const result = getResult();
+                const response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: " ++ std.fmt.format("{d}\r\n\r\n{any}", .{result.len, result});
+                _ = try client.writer().writeAll(response);
+            } else {
+                const response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+                _ = try client.writer().writeAll(response);
+            }
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: servernetes-zig-lib
+data:
+  servernetes_lib.zig: |
+    const std = @import("std");
+
+    pub fn getResult() []const u8 {
+        std.log.info("hello there", .{});
+        return "hello from Zig";
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servernetes-zig
+  labels:
+    app: servernetes
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7777
+      targetPort: 7777
+  selector:
+    name: servernetes-zig

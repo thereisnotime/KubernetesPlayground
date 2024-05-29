@@ -51,6 +51,12 @@ Port Forward All:
 bash ../port-forward-all.sh
 ```
 
+Deploy All:
+
+```bash
+bash ../deploy-all.sh
+```
+
 Send a test request:
 
 ```bash
@@ -98,3 +104,12 @@ $ python3 benchmark.py 500
 | 7781 | TypeScript |         0.0441        |         0.0058        |         0.0179        |     8964.82     |         500         |           0           |
 +------+------------+-----------------------+-----------------------+-----------------------+-----------------+---------------------+-----------------------+
 ```
+
+## Todo
+
+- [ ] Fix Zig.
+- [ ] Add Ruby.
+- [ ] Fix Java.
+- [ ] Fix Elixir.
+- [ ] Add benchmark for buildtime.
+- [ ] Add PHP.
