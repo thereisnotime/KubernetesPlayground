@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podinfo
+  annotations:
+    fluxcd.io/automated: "true"
+    fluxcd.io/tag.podinfo: semver:~6.0
+spec:
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        version: v1.0.0-prod
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9898"
+    spec:
+      containers:
+      - name: podinfo
+        image: stefanprodan/podinfo:6.5.4
+        env:
+        - name: PODINFO_UI_COLOR
+          value: "#008000"
+        - name: PODINFO_UI_MESSAGE
+          value: "Production Environment"
+        - name: PODINFO_LEVEL
+          value: "info"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "200m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000 

@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference the base layer
+bases:
+  - ../../base
+
+# Namespace for dev environment
+namespace: podinfo-dev
+
+# Name prefix for all resources
+namePrefix: dev-
+
+# Common labels for dev environment
+commonLabels:
+  environment: development
+  team: dev-team
+
+# Patches to customize resources for dev
+patchesStrategicMerge:
+  - deployment-patch.yaml
+
+# Replace the namespace name
+patches:
+  - target:
+      kind: Namespace
+      name: podinfo-base
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: podinfo-dev
+
+# ConfigMap for dev-specific configuration
+configMapGenerator:
+  - name: podinfo-config
+    literals:
+      - environment=development
+      - log_level=debug
+      - feature_flags=experimental 

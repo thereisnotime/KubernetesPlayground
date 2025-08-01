@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "podinfo-chart.fullname" . }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "podinfo-chart.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "podinfo-chart.selectorLabels" . | nindent 4 }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
+    name: {{ .Values.service.name }} 
